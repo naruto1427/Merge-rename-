@@ -1,6 +1,5 @@
 import os
 import sys
-import importlib
 from datetime import datetime
 from pytz import timezone
 from pyrogram import Client, filters, __version__
@@ -64,16 +63,12 @@ class ComboBot(Client):
 
 bot = ComboBot()
 
-# Change sys.path to use correct helpers
+# Helper path switching
 def set_helper_path(mode):
-    # Remove previous helpers
     sys.path = [p for p in sys.path if not p.endswith("helper_rename") and not p.endswith("helper_merge")]
-
     helper_dir = "helper_rename" if mode == "rename" else "helper_merge"
     abs_helper = os.path.abspath(helper_dir)
     sys.path.insert(0, abs_helper)
-
-    # Clear any cached helpers.* modules
     for modname in list(sys.modules.keys()):
         if modname.startswith("helpers."):
             del sys.modules[modname]
@@ -107,31 +102,40 @@ async def set_mode(client, callback_query):
     user_id = callback_query.from_user.id
     user_modes[user_id] = mode
 
-    # set helper path
+    # Set helper path
     set_helper_path(mode)
 
-    # Load correct plugins
-    try:
-        if mode == "rename":
-            client.plugins.clear()
-            client.plugins.load("plugins_rename")
-        elif mode == "merge":
-            client.plugins.clear()
-            client.plugins.load("plugins_merge")
+    new_plugins_root = (
+        "plugins_rename" if mode == "rename" else "plugins_merge"
+    )
 
-        await callback_query.answer(f"Mode set to {mode.capitalize()}")
+    try:
+        await callback_query.answer(f"Switching to {mode.capitalize()}...")
+
+        # stop bot
+        await client.stop()
+
+        # change plugin root
+        client.plugins = dict(root=new_plugins_root)
+
+        # start bot again
+        await client.start()
 
         new_text = f"✅ Mode set to **{mode.capitalize()}**.\nNow send your files!"
-        if callback_query.message.text != new_text:
-            await callback_query.message.edit_text(new_text)
-        else:
-            await callback_query.answer("Already in this mode!", show_alert=True)
+        try:
+            if callback_query.message.text != new_text:
+                await callback_query.message.edit_text(new_text)
+            else:
+                await callback_query.answer("Already in this mode!", show_alert=True)
+        except Exception as e:
+            print(f"Edit message error: {e}")
+            await callback_query.answer("Mode switched.")
 
     except Exception as e:
         await callback_query.message.edit_text("❌ Failed to load mode.")
         print(f"[Plugin load error]: {e}")
 
-# fallback if user sends files before choosing mode
+# Fallback if user sends files before choosing mode
 @bot.on_message((filters.document | filters.video | filters.audio | filters.photo) & filters.private)
 async def warn_if_no_mode(client, message):
     user_id = message.from_user.id
