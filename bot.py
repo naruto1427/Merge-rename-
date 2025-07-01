@@ -1,6 +1,5 @@
 import os
 import sys
-import importlib
 from datetime import datetime
 from pytz import timezone
 from pyrogram import Client, filters, __version__
@@ -9,16 +8,39 @@ from pyrogram.raw.all import layer
 from aiohttp import web
 from config import Config
 from route import web_server
+# plugins_rename
+from plugins_rename.start import start_handler as rename_start
+from plugins_rename.rename import rename_file
+from plugins_rename.save import save_thumb
+from plugins_rename.delete import delete_thumb
 
-# --------------------------
-# Global State
-# --------------------------
-user_modes = {}          # stores user_id → mode
-banned_users = set()     # stores banned user_ids
+# plugins_merge
+from plugins_merge.start import start_handler as merge_start
+from plugins_merge.commands import handle_files as merge_handle_files
+from plugins_merge.thumb import save_thumbnail as merge_save_thumb
+from plugins_merge.thumb import delete_thumbnail as merge_delete_thumb
 
-# --------------------------
-# Combo Bot Class
-# --------------------------
+# user_modes keeps track of each user's chosen mode
+user_modes = {}
+
+# add helpers folders to path
+sys.path.insert(0, os.path.abspath("helper_rename"))
+sys.path.insert(0, os.path.abspath("helper_merge"))
+
+# Import handlers from rename plugins
+from plugins_rename.start import start_handler as rename_start
+from plugins_rename.rename import rename_file
+from plugins_rename.save import save_thumb
+from plugins_rename.delete import delete_thumb
+# ...import other rename plugin functions you need
+
+# Import handlers from merge plugins
+from plugins_merge.start import start_handler as merge_start
+from plugins_merge.commands import handle_files as merge_handle_files
+from plugins_merge.thumb import save_thumbnail as merge_save_thumb
+from plugins_merge.thumb import delete_thumbnail as merge_delete_thumb
+# ...import other merge plugin functions you need
+
 class ComboBot(Client):
     def __init__(self):
         super().__init__(
@@ -27,7 +49,6 @@ class ComboBot(Client):
             api_hash=Config.API_HASH,
             bot_token=Config.BOT_TOKEN,
             workers=300,
-            plugins=dict(root="plugins_default"),  # default fallback
             sleep_threshold=15,
         )
 
@@ -71,141 +92,74 @@ class ComboBot(Client):
 
 bot = ComboBot()
 
-# --------------------------
-# Helper Path Switching
-# --------------------------
-def set_helper_path(mode):
-    # Remove previous helper dirs
-    sys.path = [
-        p for p in sys.path if not p.endswith("helper_rename") and not p.endswith("helper_merge")
-    ]
-
-    helper_dir = "helper_rename" if mode == "rename" else "helper_merge"
-    abs_helper = os.path.abspath(helper_dir)
-    sys.path.insert(0, abs_helper)
-
-    # Clear any cached helpers.* modules
-    for modname in list(sys.modules.keys()):
-        if modname.startswith("helpers."):
-            del sys.modules[modname]
-
-# --------------------------
-# Mode Switching
-# --------------------------
-async def switch_mode(client, message, mode):
-    user_id = message.from_user.id
-
-    # Check ban
-    if user_id in banned_users:
-        await message.reply_text("🚫 You are banned from using this bot.")
-        return
-
-    user_modes[user_id] = mode
-    set_helper_path(mode)
-
-    try:
-        client.plugins.clear()
-        client.plugins.load("plugins_" + mode)
-        await message.reply_text(f"✅ Mode set to **{mode.capitalize()}**.\nNow send your files!")
-
-        # Send log to LOG_CHANNEL
-        if Config.LOG_CHANNEL:
-            await client.send_message(
-                Config.LOG_CHANNEL,
-                f"👤 User [{message.from_user.first_name}](tg://user?id={user_id}) set mode to **{mode}**."
-            )
-    except Exception as e:
-        await message.reply_text("❌ Failed to load mode.")
-        print(f"[Plugin load error]: {e}")
-        if Config.LOG_CHANNEL:
-            await client.send_message(
-                Config.LOG_CHANNEL,
-                f"⚠️ Error loading plugins for mode `{mode}`:\n`{e}`"
-            )
-
-# --------------------------
-# Commands
-# --------------------------
-
 # /start
 @bot.on_message(filters.command("start") & filters.private)
-async def start_handler(client, message):
-    await message.reply_text(
-        f"Hello **{message.from_user.first_name}**!\n\n"
-        "I'm a multifunction bot:\n"
-        "📝 Rename Files\n"
-        "🎬 Merge Videos, Audio, etc.\n\n"
-        "Use /rename_on or /merge_on to choose your mode."
+async def start(client, message):
+    user_id = message.from_user.id
+    mode = user_modes.get(user_id, "rename")
+    if mode == "rename":
+        await rename_start(client, message)
+    elif mode == "merge":
+        await merge_start(client, message)
+
+# /mode
+@bot.on_message(filters.command("mode") & filters.private)
+async def mode_command(client, message):
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📝 Rename", callback_data="set_mode_rename"),
+            InlineKeyboardButton("🎬 Merge", callback_data="set_mode_merge")
+        ]
+    ])
+    await message.reply_text("Choose your working mode:", reply_markup=keyboard)
+
+# Callback to set mode
+@bot.on_callback_query(filters.regex(r"set_mode_(rename|merge)"))
+async def set_mode(client, callback_query):
+    mode = callback_query.data.split("_")[-1]
+    user_id = callback_query.from_user.id
+    user_modes[user_id] = mode
+
+    await callback_query.answer(f"Mode set to {mode.capitalize()}")
+    await callback_query.message.edit_text(
+        f"✅ Mode set to **{mode.capitalize()}**.\nNow send your files!"
     )
 
-# /rename_on
-@bot.on_message(filters.command("rename_on") & filters.private)
-async def rename_on(client, message):
-    await switch_mode(client, message, "rename")
-
-# /merge_on
-@bot.on_message(filters.command("merge_on") & filters.private)
-async def merge_on(client, message):
-    await switch_mode(client, message, "merge")
-
-# /ban
-@bot.on_message(filters.command("ban") & filters.user(Config.ADMIN))
-async def ban_user(client, message):
-    if len(message.command) < 2:
-        await message.reply_text("Usage:\n/ban user_id")
-        return
-
-    user_id = int(message.command[1])
-    banned_users.add(user_id)
-    await message.reply_text(f"🚫 User `{user_id}` banned.")
-
-    if Config.LOG_CHANNEL:
-        await client.send_message(
-            Config.LOG_CHANNEL,
-            f"🚫 User `{user_id}` has been banned."
-        )
-
-# /unban
-@bot.on_message(filters.command("unban") & filters.user(Config.ADMIN))
-async def unban_user(client, message):
-    if len(message.command) < 2:
-        await message.reply_text("Usage:\n/unban user_id")
-        return
-
-    user_id = int(message.command[1])
-    banned_users.discard(user_id)
-    await message.reply_text(f"✅ User `{user_id}` unbanned.")
-
-    if Config.LOG_CHANNEL:
-        await client.send_message(
-            Config.LOG_CHANNEL,
-            f"✅ User `{user_id}` has been unbanned."
-        )
-
-# /users
-@bot.on_message(filters.command("users") & filters.user(Config.ADMIN))
-async def list_users(client, message):
-    text = "**👥 Users and Modes:**\n"
-    for uid, mode in user_modes.items():
-        text += f"• `{uid}` → **{mode}**\n"
-    if not user_modes:
-        text += "No users have selected a mode yet."
-
-    await message.reply_text(text)
-
-# fallback if user sends files before choosing mode
-@bot.on_message((filters.document | filters.video | filters.audio | filters.photo) & filters.private)
-async def warn_if_no_mode(client, message):
+# File upload handler (documents, videos, audio, photos)
+@bot.on_message(
+    (filters.document | filters.video | filters.audio | filters.photo)
+    & filters.private
+)
+async def file_router(client, message):
     user_id = message.from_user.id
+    mode = user_modes.get(user_id, "rename")
 
-    # Check ban
-    if user_id in banned_users:
-        await message.reply_text("🚫 You are banned from using this bot.")
-        return
+    if mode == "rename":
+        await rename_file(client, message)
+    elif mode == "merge":
+        await merge_handle_files(client, message)
+    else:
+        await message.reply_text("❗ Please choose a mode first using /mode.")
 
-    if user_id not in user_modes:
-        await message.reply_text(
-            "❗ Please select a mode first:\n/rename_on or /merge_on"
-        )
+# Optional: thumb handlers
+@bot.on_message(filters.command(["savethumb", "setthumb"]) & filters.private)
+async def save_thumb_handler(client, message):
+    user_id = message.from_user.id
+    mode = user_modes.get(user_id, "rename")
+
+    if mode == "rename":
+        await save_thumb(client, message)
+    elif mode == "merge":
+        await merge_save_thumb(client, message)
+
+@bot.on_message(filters.command(["deletethumb"]) & filters.private)
+async def delete_thumb_handler(client, message):
+    user_id = message.from_user.id
+    mode = user_modes.get(user_id, "rename")
+
+    if mode == "rename":
+        await delete_thumb(client, message)
+    elif mode == "merge":
+        await merge_delete_thumb(client, message)
 
 bot.run()
