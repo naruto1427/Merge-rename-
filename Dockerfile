@@ -1,16 +1,20 @@
-FROM python:3.10
+FROM ubuntu:latest
 
-# Set the working directory in the container
-WORKDIR /app
+WORKDIR /usr/src/mergebot
+RUN chmod 777 /usr/src/mergebot
 
-# Copy all the files from the current directory to /app in the container
-COPY . /app/
+RUN apt-get -y update && apt-get -y upgrade && apt-get install apt-utils -y && \
+    apt-get install -y python3 python3-pip git \
+    p7zip-full p7zip-rar xz-utils wget curl pv jq \
+    ffmpeg unzip neofetch mediainfo
 
-# Install FFmpeg
-RUN apt-get update && apt-get install -y ffmpeg
+# RUN curl https://rclone.org/install.sh | bash
 
-# Install Python dependencies
-RUN pip3 install -r requirements.txt
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
 
-# Command to run your Python script
-CMD ["python3", "bot.py"]
+COPY . .
+
+RUN chmod +x start.sh
+
+CMD ["bash","start.sh"]
