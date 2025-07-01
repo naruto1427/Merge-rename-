@@ -9,3 +9,11 @@ pyromod
 python-dotenv
 requests
 TgCrypto
+pyromod
+TgCrypto
+motor
+aiohttp
+pytz
+Flask
+gunicorn
+aiohttp
