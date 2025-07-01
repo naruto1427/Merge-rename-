@@ -20,7 +20,7 @@ class ComboBot(Client):
             api_hash=Config.API_HASH,
             bot_token=Config.BOT_TOKEN,
             workers=300,
-            plugins=dict(root="plugins_default"),  # empty fallback folder
+            plugins=dict(root="plugins_default"),  # fallback
             sleep_threshold=15,
         )
 
@@ -73,12 +73,12 @@ def set_helper_path(mode):
     abs_helper = os.path.abspath(helper_dir)
     sys.path.insert(0, abs_helper)
 
-    # Clear previous cached helpers.* modules
+    # Clear any cached helpers.* modules
     for modname in list(sys.modules.keys()):
         if modname.startswith("helpers."):
             del sys.modules[modname]
 
-# /start command
+# /start
 @bot.on_message(filters.command("start") & filters.private)
 async def start_handler(client, message):
     await message.reply_text(
@@ -89,7 +89,7 @@ async def start_handler(client, message):
         "Use /mode to choose your mode."
     )
 
-# /mode command
+# /mode
 @bot.on_message(filters.command("mode") & filters.private)
 async def mode_command(client, message):
     keyboard = InlineKeyboardMarkup([
@@ -107,7 +107,7 @@ async def set_mode(client, callback_query):
     user_id = callback_query.from_user.id
     user_modes[user_id] = mode
 
-    # set helper import path
+    # set helper path
     set_helper_path(mode)
 
     # Load correct plugins
@@ -120,9 +120,13 @@ async def set_mode(client, callback_query):
             client.plugins.load("plugins_merge")
 
         await callback_query.answer(f"Mode set to {mode.capitalize()}")
-        await callback_query.message.edit_text(
-            f"✅ Mode set to **{mode.capitalize()}**.\nNow send your files!"
-        )
+
+        new_text = f"✅ Mode set to **{mode.capitalize()}**.\nNow send your files!"
+        if callback_query.message.text != new_text:
+            await callback_query.message.edit_text(new_text)
+        else:
+            await callback_query.answer("Already in this mode!", show_alert=True)
+
     except Exception as e:
         await callback_query.message.edit_text("❌ Failed to load mode.")
         print(f"[Plugin load error]: {e}")
