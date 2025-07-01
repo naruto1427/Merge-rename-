@@ -20,7 +20,7 @@ class ComboBot(Client):
             api_hash=Config.API_HASH,
             bot_token=Config.BOT_TOKEN,
             workers=300,
-            plugins=dict(root="plugins_default"),  # fallback empty folder
+            plugins=dict(root="plugins_default"),  # empty fallback folder
             sleep_threshold=15,
         )
 
@@ -64,28 +64,28 @@ class ComboBot(Client):
 
 bot = ComboBot()
 
-# Update helper import path based on mode
+# Change sys.path to use correct helpers
 def set_helper_path(mode):
-    # Remove old helper paths
+    # Remove previous helpers
     sys.path = [p for p in sys.path if not p.endswith("helper_rename") and not p.endswith("helper_merge")]
 
-    # Add new helper path
-    helper_folder = "helper_rename" if mode == "rename" else "helper_merge"
-    sys.path.insert(0, os.path.abspath(helper_folder))
+    helper_dir = "helper_rename" if mode == "rename" else "helper_merge"
+    abs_helper = os.path.abspath(helper_dir)
+    sys.path.insert(0, abs_helper)
 
-    # Clear previously cached modules under helpers.*
-    for key in list(sys.modules):
-        if key.startswith("helpers."):
-            del sys.modules[key]
+    # Clear previous cached helpers.* modules
+    for modname in list(sys.modules.keys()):
+        if modname.startswith("helpers."):
+            del sys.modules[modname]
 
 # /start command
 @bot.on_message(filters.command("start") & filters.private)
 async def start_handler(client, message):
     await message.reply_text(
         f"Hello **{message.from_user.first_name}**!\n\n"
-        "I'm a multifunctional bot:\n"
-        "🔹 Rename Files\n"
-        "🔹 Merge Videos & Audios\n\n"
+        "I'm a multifunction bot:\n"
+        "📝 Rename Files\n"
+        "🎬 Merge Videos, Audio, etc.\n\n"
         "Use /mode to choose your mode."
     )
 
@@ -100,17 +100,17 @@ async def mode_command(client, message):
     ])
     await message.reply_text("Choose your working mode:", reply_markup=keyboard)
 
-# Button handler
+# Callback query to set mode
 @bot.on_callback_query(filters.regex(r"set_mode_(rename|merge)"))
 async def set_mode(client, callback_query):
     mode = callback_query.data.split("_")[-1]
     user_id = callback_query.from_user.id
     user_modes[user_id] = mode
 
-    # Set helper path
+    # set helper import path
     set_helper_path(mode)
 
-    # Load correct plugin folder
+    # Load correct plugins
     try:
         if mode == "rename":
             client.plugins.clear()
@@ -120,16 +120,20 @@ async def set_mode(client, callback_query):
             client.plugins.load("plugins_merge")
 
         await callback_query.answer(f"Mode set to {mode.capitalize()}")
-        await callback_query.message.edit_text(f"✅ Mode set to **{mode.capitalize()}**.\nNow send your files.")
+        await callback_query.message.edit_text(
+            f"✅ Mode set to **{mode.capitalize()}**.\nNow send your files!"
+        )
     except Exception as e:
         await callback_query.message.edit_text("❌ Failed to load mode.")
         print(f"[Plugin load error]: {e}")
 
-# Fallback if user forgets to choose mode
-@bot.on_message((filters.document | filters.video | filters.audio) & filters.private)
+# fallback if user sends files before choosing mode
+@bot.on_message((filters.document | filters.video | filters.audio | filters.photo) & filters.private)
 async def warn_if_no_mode(client, message):
     user_id = message.from_user.id
     if user_id not in user_modes:
-        await message.reply_text("❗ Please select a mode first using /mode.")
+        await message.reply_text(
+            "❗ Please select a mode first using /mode."
+        )
 
 bot.run()
